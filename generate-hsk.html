@@ -1,0 +1,534 @@
+﻿<!DOCTYPE HTML>
+<html>
+    <head>
+        <style>
+            .left {
+                float: left;
+            }
+
+            .hidden {
+                display: none;
+            }
+
+            textarea#output {
+                margin: 0 1em;
+            }
+
+            textarea#back {
+                font-size: 1.1em;
+            }
+
+            .suggestions {
+                text-indent: 1em;
+            }
+
+            .suggestions a.suggestion {
+                color: darkgray;
+            }
+
+            button.big-btn {
+                font-size: 2em;
+                width: 200px;
+            }
+
+            td, th {
+                padding-left: 10px;
+                padding-right: 10px;
+            }
+
+            div.spacer {
+                margin: 1em;
+                padding: 1em;
+            }
+
+            option.duplicate-hilight {
+                background-color: greenyellow;
+            }
+
+            option.duplicate-hilight.word-deleted,
+            option.word-deleted {
+                background-color: orangered;
+            }
+
+            span.wide-space {
+                padding: 0 7em;
+            }
+        </style>
+    </head>
+    <body>
+        <form id="form">
+            <input type="file" name="file" id="file" />
+            <select name="level" id="level">
+                <option value="all">All levels</option>
+                <option value="new-1">New HSK Level 1</option>
+            </select>
+
+            <button id="defaults-button">Import words</button>
+            <button id="anki-button">Export anki</button>
+            <button id="export-button">Export local storage</button>
+        </form>
+
+        <div>
+            <select id="wordlist" class="left" size="30"></select>
+            <textarea id="output" class="left" rows="40" cols="100"></textarea>
+
+            <p>
+                <input type="text" id="front" placeholder="Front" />
+            </p>
+            <!-- <p class="suggestions"> -->
+                <!-- <a href="#" class="suggestion" data-suggest="front-pinyin">Pinyin</a> -->
+                <!-- <a href="#" class="suggestion" data-suggest="front-simplified">Simplified</a> -->
+                <!-- <a href="#" class="suggestion" data-suggest="front-traditional">Traditional</a> -->
+            <!-- </p> -->
+            <p>
+                <!--<input type="text" id="back" placeholder="Back" height="10" />-->
+                <textarea id="back" placeholder="Back" rows="15" cols="50"></textarea>
+            </p>
+            <p class="suggestions">
+                <!--<a href="#" class="suggestion" data-suggest="back-all">Use all definitions.</a>-->
+            </p>
+            <p>
+                <button id="previous" class="big-btn">Previous</button>
+                <button id="next" class="big-btn">Next</button>
+            </p>
+            <p>
+                <label><input type="checkbox" id="delete" />Delete</label>
+            </p>
+        </div>
+
+        <div style="clear: both;">
+            <div class="spacer"></div>
+
+            <hr />
+            
+            <h3>Statistics</h3>
+            <table border="1">
+                <tbody>
+                    <tr>
+                        <td>Words:</td>
+                        <td id="stats-words">0</td>
+                    </tr>
+                    <tr>
+                        <td>Duplicates:</td>
+                        <td id="stats-duplicates">0</td>
+                    </tr>
+                    <tr>
+                        <td>Deleted:</td>
+                        <td id="stats-deleted">0</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+    </body>
+</html>
+
+
+<script type="text/javascript">
+
+    // json records
+    let hsk;
+
+    // for hilighting duplicates
+    // i'm using the word.simplified field because it will hilight true duplicates that get a unique ID because they are identical and on different rows in the json record list.
+    const visited_word = new Set();
+    const duplicate_word = new Set();
+
+    const form = document.getElementById("form");
+    // reset form because local web sites save form data for some reason.
+    // i want it to remember the file i gave, but i don't want to rely on this feature, it's not always reliable.
+    // form.reset();
+    // nvm the file will be stored in browser cache and i will just rely on it being there, or repicking it if needed.
+    const infile = document.getElementById("file");
+    infile.onchange = CollectFile;
+
+    const levelbox = document.getElementById("level");
+    levelbox.onchange = Filter;
+
+    const wordlistbox = document.getElementById("wordlist");
+    wordlistbox.addEventListener("change", function (e) {
+        localStorage.setItem("pickup", wordlistbox.value);
+        Read(wordlistbox.value);
+    });
+
+    document.getElementById("defaults-button").addEventListener("click", function (e) {
+        e.preventDefault();
+
+        if (!confirm("Are you sure you want to overwrite all cards with default values?")) {
+            return;
+        }
+
+        wordlistbox.innerHTML = "";
+        localStorage.clear();
+        duplicate_word.clear();
+        visited_word.clear();
+
+        for (let i = 0; i < hsk.length; i++) {
+            const word = hsk[i];
+            for (let j = 0; j < word.forms.length; j++) {
+                const form = word.forms[j];
+
+                const { id } = CreateWordEntry(word, form, i, j);
+
+                // save the card data with defaults
+                const front = `${word.simplified} (${form.transcriptions.pinyin})`;
+                const back = form.meanings.join("\n") + "\n";
+                UpdateOne(id, front, back);
+
+                // try to guess if i want the word to be included or excluded
+                if (back.toLowerCase().includes("surname") || back.toLowerCase().includes("variant")) {
+                    SetDeleted(id, true);
+                }
+            }
+        }
+
+        DisplayData();
+        console.log("imported.")
+    })
+
+    const tab = "\t";
+    const newline = "\n";
+
+    document.getElementById("anki-button").addEventListener("click", function (e) {
+        e.preventDefault();
+
+        const timestamp = new Date();
+        const filename = timestamp.toISOString().replaceAll(":", "-").substring(0, 19).replace("T", "-") + "-words.csv";
+
+        let text = "";
+
+        for (let i = 0; i < wordlistbox.options.length; i++) {
+            const option = wordlistbox.options[i]
+            const id = option.id;
+            const data = JSON.parse(localStorage.getItem(id));
+            const deleted = GetDeleted(id);
+
+            if (deleted) {
+                continue;
+            }
+
+            if (option.classList.contains("hidden")) {
+                continue;
+            }
+
+            if (!data) {
+                console.log(option.innerHTML);
+                continue;
+            }
+
+            //text += data.front + tab + escape(data.back) + newline;
+            //text += data.front + tab + data.back.replaceAll("\n", "\\n") + newline;
+            text += data.front + tab + data.back.split("\n").map(line => `<p>${line}</p>`) + newline;
+        }
+
+        DownloadTextFile(filename, text);
+    });
+
+    function DownloadTextFile(filename, text) {
+        const blob = new Blob([text], { type: "text/plain" });
+        const url = URL.createObjectURL(blob);
+
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+
+        // ???
+        //a.style.display = "none";
+        //document.body.appendChild(a);
+        a.click();
+        // Clean up
+        //document.body.removeChild(a);
+
+        URL.revokeObjectURL(url);
+    }
+
+    // local storage import/export
+    document.getElementById("export-button").addEventListener("click", function (e) {
+        e.preventDefault();
+
+        const timestamp = new Date();
+        const filename = timestamp.toISOString().replaceAll(":", "-").substring(0, 19).replace("T", "-") + "-localStorage.json";
+
+        DownloadTextFile(filename, JSON.stringify(localStorage));
+    });
+
+    const frontbox = document.getElementById("front");
+    const backbox = document.getElementById("back");
+    const textarea = document.querySelector("textarea#output");
+
+    frontbox.oninput = Update;
+    backbox.oninput = Update;
+
+    function Read(id) {
+        const obj = JSON.parse(localStorage.getItem(id));
+        frontbox.value = obj?.front || "";
+        backbox.value = obj?.back || "";
+
+        const option = document.getElementById(id);
+        const rec = hsk[option.dataset["pointer"]];
+
+        textarea.value = JSON.stringify(rec, null, 2);
+
+        deleted_checkbox.checked = GetDeleted(id);
+    }
+
+    function Update() {
+        const id = wordlistbox.value;
+        const front = frontbox.value;
+        const back = backbox.value;
+        UpdateOne(id, front, back);
+    }
+
+    function UpdateOne(id, front, back) {
+        localStorage.setItem(id, JSON.stringify({ id, front, back }));
+        localStorage.setItem("pickup", id);
+    }
+
+    document.getElementById("previous").onclick = function (e) {
+        Update();
+
+        for (let i = wordlistbox.selectedIndex - 1; 0 <= i; i--) {
+            const id = wordlistbox.options[i].id;
+            const current = document.getElementById(id);
+
+            if (!current.classList.contains("hidden")) {
+                wordlistbox.value = id;
+                Read(id);
+                localStorage.setItem("pickup", id);
+                break;
+            }
+        }
+    }
+
+    document.getElementById("next").onclick = function (e) {
+        Update();
+
+        for (let i = wordlistbox.selectedIndex + 1; i < wordlistbox.options.length; i++) {
+            const id = wordlistbox.options[i].id;
+            const current = document.getElementById(id);
+
+            if (current.classList.contains("hidden") || current.classList.contains("word-deleted")) {
+                continue;
+            }
+
+            wordlistbox.value = id;
+            Read(id);
+            localStorage.setItem("pickup", id);
+            break;
+        }
+    }
+
+    const deleted_checkbox = document.getElementById("delete");
+    deleted_checkbox.addEventListener("change", function (e) {
+        const deleted = e.target.checked;
+        const id = wordlistbox.value;
+        // not sure why i didn't just save the whole object under one entry but whatever.
+        SetDeleted(id, deleted);
+        DisplayData();
+    })
+
+    function SetDeleted(id, deleted) {
+        localStorage.setItem("delete-" + id, deleted);
+    }
+
+    function GetDeleted(id) {
+        return localStorage.getItem("delete-" + id) == "true";
+    }
+
+    function CollectFile() {
+        const formdata = new FormData(form);
+        const file = formdata.get("file");
+
+        if (file.size) {
+            file.text()
+                .then(text => hsk = JSON.parse(text))
+                .then(() => {
+                    duplicate_word.clear();
+                    visited_word.clear();
+
+                    for (let i = 0; i < hsk.length; i++) {
+                        const word = hsk[i];
+                        for (let j = 0; j < word.forms.length; j++) {
+                            const form = word.forms[j];
+                            CreateWordEntry(word, form, i, j);
+                        }
+                    }
+
+                    try {
+                        const { id } = wordlistbox.options[wordlistbox.selectedIndex];
+                        if (id && id?.length) {
+                            Read(id)
+                        }
+                    }
+                    catch {
+
+                    }
+
+                    DisplayData();
+                });
+        }
+    }
+    CollectFile();
+
+    // create the card asset and id, and add it to the select box.
+    function CreateWordEntry(word, form, i, j) {
+
+        // determine if this is a duplicate or not.
+        // hilight will be set elsewhere because we can't get the first one from here.
+        if (visited_word.has(word.simplified)) {
+            duplicate_word.add(word.simplified);
+        }
+
+        visited_word.add(word.simplified);
+
+        // create option for select box and return it
+        const option = document.createElement("option");
+        option.id = GenerateID(i, j);
+        option.text = `${i} ${word.simplified} (${form.transcriptions.pinyin})`;
+        option.value = option.id;
+        option.dataset["pointer"] = i;
+        option.dataset["pointer2"] = j;
+        option.selected = localStorage.getItem("pickup") === option.value;
+        if (levelbox.value == "all" || word.level.includes(levelbox.value)) {
+            option.classList.add("visible");
+        }
+        else {
+            option.classList.add("hidden")
+        }
+        wordlistbox.appendChild(option);
+
+        return option;
+    }
+
+    function Filter() {
+
+        for (let i = 0; i < wordlistbox.options.length; i++) {
+            const option = wordlistbox.options[i];
+            const word = hsk[option.dataset["pointer"]];
+
+            const alllevel = levelbox.value == "all";
+
+            if (alllevel || word.level.indexOf(levelbox.value) >= 0) {
+                option.classList.remove("hidden");
+                option.classList.add("visible");
+            }
+            else {
+                option.classList.add("hidden");
+                option.classList.remove("visible");
+            }
+        }
+    }
+
+    //function GenerateID(str) {
+    //    let hash = 0;
+    //    for (let i = 0; i < str.length; i++) {
+    //        hash = (hash << 5) - hash + str.charCodeAt(i);
+    //        hash |= 0; // Convert to 32bit integer
+    //    }
+    //    return Math.abs(hash).toString(36); // convert to base36 for shorter ID
+    //}
+
+    function GenerateID(i, j) {
+        return `word-${i}-${j}`;
+    }
+
+    document.addEventListener("click", function (e) {
+        if (e.target.classList.contains("suggestion")) {
+            SuggestionClicked(e);
+        }
+    });
+
+    function SuggestionClicked(e) {
+        const entry = hsk[wordlistbox.selectedIndex];
+        const suggest = e.target.dataset["suggest"];
+
+        // this is the only straight forward suggestion so i will do it first.
+        if (suggest === "front-simplified") {
+            frontbox.value = entry.simplified;
+        }
+
+        Update();
+    }
+
+
+    // code to clear out local page form data.. it's too iffy to rely on this.
+    // i am keeping a few by keeping them commented out, it's bad because i should at least use a flag or sometihng.
+    // but i am focusing on doing too many things "right" and this is taking too long because of it.
+    // so i want to remember the level and the file, since we get the word list from the file.
+
+    window.addEventListener('DOMContentLoaded', () => {
+        // Clear all inputs
+        document.querySelectorAll('input').forEach(input => {
+            switch (input.type) {
+                case 'text':
+                case 'password':
+                case 'email':
+                case 'number':
+                case 'search':
+                case 'url':
+                case 'tel':
+                case 'date':
+                case 'time':
+                case 'datetime-local':
+                case 'color':
+                    input.value = '';
+                    break;
+                case 'checkbox':
+                case 'radio':
+                    input.checked = false;
+                    break;
+            }
+        });
+
+        // Clear all textareas
+        document.querySelectorAll('textarea').forEach(ta => {
+            ta.value = '';
+        });
+
+        //// Reset all selects
+        //document.querySelectorAll('select').forEach(select => {
+        //    select.selectedIndex = 0;
+        //});
+    });
+
+    function DisplayData() {
+        for (let option of wordlistbox.options) {
+            option.classList.remove("duplicate-hilight", "word-deleted");
+
+            // i will comment this out to set hilight for hidden words (in case filter gets changed)
+            // before it was a table for some reason so it made sense to just skip them.
+            //if (option.classList.contains("hidden")) {
+            //    continue;
+            //}
+
+            const i = option.dataset["pointer"] | 0;
+            const j = option.dataset["pointer2"] | 0;
+
+            const word = hsk[i];
+
+            if (duplicate_word.has(word.simplified)) {
+                option.classList.add("duplicate-hilight");
+            }
+
+            if (GetDeleted(option.id)) {
+                option.classList.add("word-deleted");
+            }
+
+            //const form = word.forms[j];
+            //const deleted = GetDeleted(option.id) || "";
+            //const data = [word.simplified, form.transcriptions.pinyin, deleted];
+
+            //const tr = table.insertRow();
+            //tr.innerHTML = data.map(d => `<td>${d}</td>`).join("");
+        }
+
+        const words = wordlistbox.querySelectorAll(".visible").length;
+        const deleted = wordlistbox.querySelectorAll(".visible.word-deleted").length;
+        const included = words - deleted;
+        const filtered = (new Set(hsk.filter(w => levelbox.value == "all" || w.level.includes(levelbox.value)).map(w => w.simplified))).size
+
+        document.querySelector("td#stats-words").innerHTML = `${included}/${words} (${filtered} words (chinese simplified) at selected level)`;
+        document.querySelector("td#stats-duplicates").innerHTML = wordlistbox.querySelectorAll(".visible.duplicate-hilight").length;
+        document.querySelector("td#stats-deleted").innerHTML = deleted;
+    }
+</script>
