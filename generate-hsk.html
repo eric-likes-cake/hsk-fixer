@@ -57,14 +57,18 @@
     </head>
     <body>
         <form id="form">
-            <input type="file" name="file" id="file" />
+            <input type="file" name="hsk-json-file" id="hsk-json-file" />
             <select name="level" id="level">
                 <option value="all">All levels</option>
                 <option value="new-1">New HSK Level 1</option>
             </select>
 
-            <button id="defaults-button">Import words</button>
-            <button id="anki-button">Export anki</button>
+            <button id="defaults-button">Import JSON</button>
+            <button id="anki-button">Export CSV</button>
+
+            <span class="wide-space"></span>
+            <input type="file" name="local-storage-file" id="local-storage-file" />
+            <button id="import-button">Import local storage</button>
             <button id="export-button">Export local storage</button>
         </form>
 
@@ -135,11 +139,7 @@
     const duplicate_word = new Set();
 
     const form = document.getElementById("form");
-    // reset form because local web sites save form data for some reason.
-    // i want it to remember the file i gave, but i don't want to rely on this feature, it's not always reliable.
-    // form.reset();
-    // nvm the file will be stored in browser cache and i will just rely on it being there, or repicking it if needed.
-    const infile = document.getElementById("file");
+    const infile = document.getElementById("hsk-json-file");
     infile.onchange = CollectFile;
 
     const levelbox = document.getElementById("level");
@@ -216,8 +216,6 @@
                 continue;
             }
 
-            //text += data.front + tab + escape(data.back) + newline;
-            //text += data.front + tab + data.back.replaceAll("\n", "\\n") + newline;
             text += data.front + tab + data.back.split("\n").map(line => `<p>${line}</p>`) + newline;
         }
 
@@ -243,6 +241,31 @@
     }
 
     // local storage import/export
+    document.getElementById("import-button").addEventListener("click", function (e) {
+        e.preventDefault();
+
+        if (!confirm("Are you sure you want to overwrite local storage?")) {
+            return;
+        }
+
+        const formdata = new FormData(form);
+        const file = formdata.get("local-storage-file");
+
+        if (!file.size) {
+            alert("File not recognized.")
+        }
+
+        file.text()
+            .then(text => JSON.parse(text))
+            .then(data => {
+                for (const [key, value] of Object.entries(data)) {
+                    localStorage.setItem(key, value);
+                }
+
+                alert("Local storage imported. Refresh")
+            })
+    });
+
     document.getElementById("export-button").addEventListener("click", function (e) {
         e.preventDefault();
 
@@ -322,7 +345,6 @@
     deleted_checkbox.addEventListener("change", function (e) {
         const deleted = e.target.checked;
         const id = wordlistbox.value;
-        // not sure why i didn't just save the whole object under one entry but whatever.
         SetDeleted(id, deleted);
         DisplayData();
     })
@@ -337,36 +359,39 @@
 
     function CollectFile() {
         const formdata = new FormData(form);
-        const file = formdata.get("file");
+        const file = formdata.get("hsk-json-file");
 
-        if (file.size) {
-            file.text()
-                .then(text => hsk = JSON.parse(text))
-                .then(() => {
-                    duplicate_word.clear();
-                    visited_word.clear();
-
-                    for (let i = 0; i < hsk.length; i++) {
-                        const word = hsk[i];
-                        for (let j = 0; j < word.forms.length; j++) {
-                            const form = word.forms[j];
-                            CreateWordEntry(word, form, i, j);
-                        }
-                    }
-
-                    try {
-                        const { id } = wordlistbox.options[wordlistbox.selectedIndex];
-                        if (id && id?.length) {
-                            Read(id)
-                        }
-                    }
-                    catch {
-
-                    }
-
-                    DisplayData();
-                });
+        if (!file.size) {
+            // don't show a message because maybe the page just loaded.
+            return;
         }
+
+        file.text()
+            .then(text => hsk = JSON.parse(text))
+            .then(() => {
+                duplicate_word.clear();
+                visited_word.clear();
+
+                for (let i = 0; i < hsk.length; i++) {
+                    const word = hsk[i];
+                    for (let j = 0; j < word.forms.length; j++) {
+                        const form = word.forms[j];
+                        CreateWordEntry(word, form, i, j);
+                    }
+                }
+
+                try {
+                    const { id } = wordlistbox.options[wordlistbox.selectedIndex];
+                    if (id && id?.length) {
+                        Read(id)
+                    }
+                }
+                catch {
+
+                }
+
+                DisplayData();
+            });
     }
     CollectFile();
 
@@ -449,12 +474,6 @@
 
         Update();
     }
-
-
-    // code to clear out local page form data.. it's too iffy to rely on this.
-    // i am keeping a few by keeping them commented out, it's bad because i should at least use a flag or sometihng.
-    // but i am focusing on doing too many things "right" and this is taking too long because of it.
-    // so i want to remember the level and the file, since we get the word list from the file.
 
     window.addEventListener('DOMContentLoaded', () => {
         // Clear all inputs
