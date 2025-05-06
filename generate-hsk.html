@@ -62,16 +62,16 @@
                 <option value="all">All levels</option>
                 <option value="new-1">New HSK Level 1</option>
             </select>
-			
-			<span class="wide-space" />
+            
+            <span class="wide-space" />
 
             <button id="defaults-button">Import defaults from JSON</button>
             <button id="anki-button">Export CSV</button>
 
             <span class="wide-space"></span>
-			
-			<label>Import local storage:</label>
-			<input type="file" name="local-storage-file" id="local-storage-file" />
+            
+            <label>Import local storage:</label>
+            <input type="file" name="local-storage-file" id="local-storage-file" />
             <!-- <button id="import-button">Import local storage</button> -->
             <button id="export-button">Export local storage</button>
         </form>
@@ -287,12 +287,12 @@
     });
 
     // local storage import/export
-	document.getElementById("local-storage-file").addEventListener("change", function (e) {
+    document.getElementById("local-storage-file").addEventListener("change", function (e) {
         const formdata = new FormData(form);
         const file = formdata.get("local-storage-file");
 
         if (!confirm("Are you sure you want to overwrite local storage?")) {
-			e.target.value = "";
+            e.target.value = "";
             return;
         }
 
@@ -306,14 +306,14 @@
                 for (const [key, value] of Object.entries(data)) {
                     localStorage.setItem(key, value);
                 }
-				
-				const id = localStorage.getItem("pickup") || wordlistbox.value;
-				
-				if (id && id?.length) {
-					Read(id)
-				}
-				
-				DisplayData();
+                
+                const id = localStorage.getItem("pickup") || wordlistbox.value;
+                
+                if (id && id?.length) {
+                    Read(id)
+                }
+                
+                DisplayData();
             })
     });
 
