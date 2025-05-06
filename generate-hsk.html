@@ -308,8 +308,9 @@
                 }
                 
                 const id = localStorage.getItem("pickup") || wordlistbox.value;
-                
+
                 if (id && id?.length) {
+                    wordlistbox.value = id;
                     Read(id)
                 }
                 
