@@ -62,13 +62,17 @@
                 <option value="all">All levels</option>
                 <option value="new-1">New HSK Level 1</option>
             </select>
+			
+			<span class="wide-space" />
 
-            <button id="defaults-button">Import JSON</button>
+            <button id="defaults-button">Import defaults from JSON</button>
             <button id="anki-button">Export CSV</button>
 
             <span class="wide-space"></span>
-            <input type="file" name="local-storage-file" id="local-storage-file" />
-            <button id="import-button">Import local storage</button>
+			
+			<label>Import local storage:</label>
+			<input type="file" name="local-storage-file" id="local-storage-file" />
+            <!-- <button id="import-button">Import local storage</button> -->
             <button id="export-button">Export local storage</button>
         </form>
 
@@ -109,6 +113,9 @@
             <table border="1">
                 <tbody>
                     <tr>
+                        <td>Filtered:</td>
+                        <td id="stats-filtered">0</td>
+                    </tr>                    <tr>
                         <td>Words:</td>
                         <td id="stats-words">0</td>
                     </tr>
@@ -139,13 +146,71 @@
     const duplicate_word = new Set();
 
     const form = document.getElementById("form");
-    const infile = document.getElementById("hsk-json-file");
-    infile.onchange = CollectFile;
-
     const levelbox = document.getElementById("level");
-    levelbox.onchange = Filter;
-
     const wordlistbox = document.getElementById("wordlist");
+    const deleted_checkbox = document.getElementById("delete");
+    const frontbox = document.getElementById("front");
+    const backbox = document.getElementById("back");
+    const textarea = document.querySelector("textarea#output");
+
+    window.addEventListener('DOMContentLoaded', () => {
+        // Clear all inputs
+        document.querySelectorAll('input').forEach(input => {
+            switch (input.type) {
+                case 'text':
+                case 'password':
+                case 'email':
+                case 'number':
+                case 'search':
+                case 'url':
+                case 'tel':
+                case 'date':
+                case 'time':
+                case 'datetime-local':
+                case 'color':
+                    input.value = '';
+                    break;
+                case 'checkbox':
+                case 'radio':
+                    input.checked = false;
+                    break;
+            }
+        });
+
+        // Clear all textareas
+        document.querySelectorAll('textarea').forEach(ta => {
+            ta.value = '';
+        });
+
+        //// Reset all selects
+        //document.querySelectorAll('select').forEach(select => {
+        //    select.selectedIndex = 0;
+        //});
+    });
+
+    document.getElementById("hsk-json-file").addEventListener("change", CollectJsonFile);
+    CollectJsonFile();
+
+    levelbox.addEventListener("change", function () {
+        for (let i = 0; i < wordlistbox.options.length; i++) {
+            const option = wordlistbox.options[i];
+            const word = hsk[option.dataset["pointer"]];
+
+            const alllevel = levelbox.value == "all";
+
+            if (alllevel || word.level.indexOf(levelbox.value) >= 0) {
+                option.classList.remove("hidden");
+                option.classList.add("visible");
+            }
+            else {
+                option.classList.add("hidden");
+                option.classList.remove("visible");
+            }
+        }
+
+        DisplayData();
+    });
+
     wordlistbox.addEventListener("change", function (e) {
         localStorage.setItem("pickup", wordlistbox.value);
         Read(wordlistbox.value);
@@ -183,7 +248,6 @@
         }
 
         DisplayData();
-        console.log("imported.")
     })
 
     const tab = "\t";
@@ -222,34 +286,15 @@
         DownloadTextFile(filename, text);
     });
 
-    function DownloadTextFile(filename, text) {
-        const blob = new Blob([text], { type: "text/plain" });
-        const url = URL.createObjectURL(blob);
-
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = filename;
-
-        // ???
-        //a.style.display = "none";
-        //document.body.appendChild(a);
-        a.click();
-        // Clean up
-        //document.body.removeChild(a);
-
-        URL.revokeObjectURL(url);
-    }
-
     // local storage import/export
-    document.getElementById("import-button").addEventListener("click", function (e) {
-        e.preventDefault();
-
-        if (!confirm("Are you sure you want to overwrite local storage?")) {
-            return;
-        }
-
+	document.getElementById("local-storage-file").addEventListener("change", function (e) {
         const formdata = new FormData(form);
         const file = formdata.get("local-storage-file");
+
+        if (!confirm("Are you sure you want to overwrite local storage?")) {
+			e.target.value = "";
+            return;
+        }
 
         if (!file.size) {
             alert("File not recognized.")
@@ -261,8 +306,14 @@
                 for (const [key, value] of Object.entries(data)) {
                     localStorage.setItem(key, value);
                 }
-
-                alert("Local storage imported. Refresh")
+				
+				const id = localStorage.getItem("pickup") || wordlistbox.value;
+				
+				if (id && id?.length) {
+					Read(id)
+				}
+				
+				DisplayData();
             })
     });
 
@@ -275,12 +326,69 @@
         DownloadTextFile(filename, JSON.stringify(localStorage));
     });
 
-    const frontbox = document.getElementById("front");
-    const backbox = document.getElementById("back");
-    const textarea = document.querySelector("textarea#output");
+    frontbox.addEventListener("input", Update);
+    backbox.addEventListener("input", Update);
 
-    frontbox.oninput = Update;
-    backbox.oninput = Update;
+    document.getElementById("previous").addEventListener("click", function (e) {
+        e.preventDefault();
+
+        Update();
+
+        for (let i = wordlistbox.selectedIndex - 1; 0 <= i; i--) {
+            const id = wordlistbox.options[i].id;
+            const current = document.getElementById(id);
+
+            if (!current.classList.contains("hidden")) {
+                wordlistbox.value = id;
+                Read(id);
+                localStorage.setItem("pickup", id);
+                break;
+            }
+        }
+    });
+
+    document.getElementById("next").addEventListener("click", function (e) {
+        e.preventDefault();
+
+        Update();
+
+        for (let i = wordlistbox.selectedIndex + 1; i < wordlistbox.options.length; i++) {
+            const id = wordlistbox.options[i].id;
+            const current = document.getElementById(id);
+
+            if (current.classList.contains("hidden") || current.classList.contains("word-deleted")) {
+                continue;
+            }
+
+            wordlistbox.value = id;
+            Read(id);
+            localStorage.setItem("pickup", id);
+            break;
+        }
+    });
+
+    deleted_checkbox.addEventListener("change", function (e) {
+        const deleted = e.target.checked;
+        const id = wordlistbox.value;
+        SetDeleted(id, deleted);
+        DisplayData();
+    })
+
+    document.addEventListener("click", function (e) {
+        if (!e.target.classList.contains("suggestion")) {
+            return;
+        }
+
+        const entry = hsk[wordlistbox.selectedIndex];
+        const suggest = e.target.dataset["suggest"];
+
+        // this is the only straight forward suggestion so i will do it first.
+        if (suggest === "front-simplified") {
+            frontbox.value = entry.simplified;
+        }
+
+        Update();
+    });
 
     function Read(id) {
         const obj = JSON.parse(localStorage.getItem(id));
@@ -307,48 +415,6 @@
         localStorage.setItem("pickup", id);
     }
 
-    document.getElementById("previous").onclick = function (e) {
-        Update();
-
-        for (let i = wordlistbox.selectedIndex - 1; 0 <= i; i--) {
-            const id = wordlistbox.options[i].id;
-            const current = document.getElementById(id);
-
-            if (!current.classList.contains("hidden")) {
-                wordlistbox.value = id;
-                Read(id);
-                localStorage.setItem("pickup", id);
-                break;
-            }
-        }
-    }
-
-    document.getElementById("next").onclick = function (e) {
-        Update();
-
-        for (let i = wordlistbox.selectedIndex + 1; i < wordlistbox.options.length; i++) {
-            const id = wordlistbox.options[i].id;
-            const current = document.getElementById(id);
-
-            if (current.classList.contains("hidden") || current.classList.contains("word-deleted")) {
-                continue;
-            }
-
-            wordlistbox.value = id;
-            Read(id);
-            localStorage.setItem("pickup", id);
-            break;
-        }
-    }
-
-    const deleted_checkbox = document.getElementById("delete");
-    deleted_checkbox.addEventListener("change", function (e) {
-        const deleted = e.target.checked;
-        const id = wordlistbox.value;
-        SetDeleted(id, deleted);
-        DisplayData();
-    })
-
     function SetDeleted(id, deleted) {
         localStorage.setItem("delete-" + id, deleted);
     }
@@ -357,7 +423,50 @@
         return localStorage.getItem("delete-" + id) == "true";
     }
 
-    function CollectFile() {
+    // create the card asset and id, and add it to the select box.
+    function CreateWordEntry(word, form, i, j) {
+
+        // determine if this is a duplicate or not.
+        // hilight will be set elsewhere because we can't get the first one from here.
+        if (visited_word.has(word.simplified)) {
+            duplicate_word.add(word.simplified);
+        }
+
+        visited_word.add(word.simplified);
+
+        // create option for select box and return it
+        const option = document.createElement("option");
+        option.id = GenerateID(i, j);
+        option.text = `${i} ${word.simplified} (${form.transcriptions.pinyin})`;
+        option.value = option.id;
+        option.dataset["pointer"] = i;
+        option.dataset["pointer2"] = j;
+        option.selected = localStorage.getItem("pickup") === option.value;
+        if (levelbox.value == "all" || word.level.includes(levelbox.value)) {
+            option.classList.add("visible");
+        }
+        else {
+            option.classList.add("hidden")
+        }
+        wordlistbox.appendChild(option);
+
+        return option;
+    }
+
+    //function GenerateID(str) {
+    //    let hash = 0;
+    //    for (let i = 0; i < str.length; i++) {
+    //        hash = (hash << 5) - hash + str.charCodeAt(i);
+    //        hash |= 0; // Convert to 32bit integer
+    //    }
+    //    return Math.abs(hash).toString(36); // convert to base36 for shorter ID
+    //}
+
+    function GenerateID(i, j) {
+        return `word-${i}-${j}`;
+    }
+
+    function CollectJsonFile() {
         const formdata = new FormData(form);
         const file = formdata.get("hsk-json-file");
 
@@ -393,122 +502,6 @@
                 DisplayData();
             });
     }
-    CollectFile();
-
-    // create the card asset and id, and add it to the select box.
-    function CreateWordEntry(word, form, i, j) {
-
-        // determine if this is a duplicate or not.
-        // hilight will be set elsewhere because we can't get the first one from here.
-        if (visited_word.has(word.simplified)) {
-            duplicate_word.add(word.simplified);
-        }
-
-        visited_word.add(word.simplified);
-
-        // create option for select box and return it
-        const option = document.createElement("option");
-        option.id = GenerateID(i, j);
-        option.text = `${i} ${word.simplified} (${form.transcriptions.pinyin})`;
-        option.value = option.id;
-        option.dataset["pointer"] = i;
-        option.dataset["pointer2"] = j;
-        option.selected = localStorage.getItem("pickup") === option.value;
-        if (levelbox.value == "all" || word.level.includes(levelbox.value)) {
-            option.classList.add("visible");
-        }
-        else {
-            option.classList.add("hidden")
-        }
-        wordlistbox.appendChild(option);
-
-        return option;
-    }
-
-    function Filter() {
-
-        for (let i = 0; i < wordlistbox.options.length; i++) {
-            const option = wordlistbox.options[i];
-            const word = hsk[option.dataset["pointer"]];
-
-            const alllevel = levelbox.value == "all";
-
-            if (alllevel || word.level.indexOf(levelbox.value) >= 0) {
-                option.classList.remove("hidden");
-                option.classList.add("visible");
-            }
-            else {
-                option.classList.add("hidden");
-                option.classList.remove("visible");
-            }
-        }
-    }
-
-    //function GenerateID(str) {
-    //    let hash = 0;
-    //    for (let i = 0; i < str.length; i++) {
-    //        hash = (hash << 5) - hash + str.charCodeAt(i);
-    //        hash |= 0; // Convert to 32bit integer
-    //    }
-    //    return Math.abs(hash).toString(36); // convert to base36 for shorter ID
-    //}
-
-    function GenerateID(i, j) {
-        return `word-${i}-${j}`;
-    }
-
-    document.addEventListener("click", function (e) {
-        if (e.target.classList.contains("suggestion")) {
-            SuggestionClicked(e);
-        }
-    });
-
-    function SuggestionClicked(e) {
-        const entry = hsk[wordlistbox.selectedIndex];
-        const suggest = e.target.dataset["suggest"];
-
-        // this is the only straight forward suggestion so i will do it first.
-        if (suggest === "front-simplified") {
-            frontbox.value = entry.simplified;
-        }
-
-        Update();
-    }
-
-    window.addEventListener('DOMContentLoaded', () => {
-        // Clear all inputs
-        document.querySelectorAll('input').forEach(input => {
-            switch (input.type) {
-                case 'text':
-                case 'password':
-                case 'email':
-                case 'number':
-                case 'search':
-                case 'url':
-                case 'tel':
-                case 'date':
-                case 'time':
-                case 'datetime-local':
-                case 'color':
-                    input.value = '';
-                    break;
-                case 'checkbox':
-                case 'radio':
-                    input.checked = false;
-                    break;
-            }
-        });
-
-        // Clear all textareas
-        document.querySelectorAll('textarea').forEach(ta => {
-            ta.value = '';
-        });
-
-        //// Reset all selects
-        //document.querySelectorAll('select').forEach(select => {
-        //    select.selectedIndex = 0;
-        //});
-    });
 
     function DisplayData() {
         for (let option of wordlistbox.options) {
@@ -546,8 +539,27 @@
         const included = words - deleted;
         const filtered = (new Set(hsk.filter(w => levelbox.value == "all" || w.level.includes(levelbox.value)).map(w => w.simplified))).size
 
-        document.querySelector("td#stats-words").innerHTML = `${included}/${words} (${filtered} words (chinese simplified) at selected level)`;
+        document.querySelector("td#stats-filtered").innerHTML = `${filtered} matching entries`;
+        document.querySelector("td#stats-words").innerHTML = `${included}/${words} forms included`;
         document.querySelector("td#stats-duplicates").innerHTML = wordlistbox.querySelectorAll(".visible.duplicate-hilight").length;
         document.querySelector("td#stats-deleted").innerHTML = deleted;
+    }
+
+    function DownloadTextFile(filename, text) {
+        const blob = new Blob([text], { type: "text/plain" });
+        const url = URL.createObjectURL(blob);
+
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+
+        // ???
+        //a.style.display = "none";
+        //document.body.appendChild(a);
+        a.click();
+        // Clean up
+        //document.body.removeChild(a);
+
+        URL.revokeObjectURL(url);
     }
 </script>
