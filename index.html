@@ -153,45 +153,14 @@
     const backbox = document.getElementById("back");
     const textarea = document.querySelector("textarea#output");
 
-    window.addEventListener('DOMContentLoaded', () => {
-        // Clear all inputs
-        document.querySelectorAll('input').forEach(input => {
-            switch (input.type) {
-                case 'text':
-                case 'password':
-                case 'email':
-                case 'number':
-                case 'search':
-                case 'url':
-                case 'tel':
-                case 'date':
-                case 'time':
-                case 'datetime-local':
-                case 'color':
-                    input.value = '';
-                    break;
-                case 'checkbox':
-                case 'radio':
-                    input.checked = false;
-                    break;
-            }
-        });
-
-        // Clear all textareas
-        document.querySelectorAll('textarea').forEach(ta => {
-            ta.value = '';
-        });
-
-        //// Reset all selects
-        //document.querySelectorAll('select').forEach(select => {
-        //    select.selectedIndex = 0;
-        //});
-    });
+	levelbox.value = localStorage.getItem("level") || "all";
 
     document.getElementById("hsk-json-file").addEventListener("change", CollectJsonFile);
     CollectJsonFile();
 
     levelbox.addEventListener("change", function () {
+		localStorage.setItem("level", levelbox.value);
+	
         for (let i = 0; i < wordlistbox.options.length; i++) {
             const option = wordlistbox.options[i];
             const word = hsk[option.dataset["pointer"]];
